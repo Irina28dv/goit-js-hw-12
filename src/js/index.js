@@ -2,6 +2,7 @@ import axios from 'axios';
 import iziToast from 'izitoast';
 import SimpleLightbox from 'simplelightbox';
 import 'simplelightbox/dist/simple-lightbox.min.css';
+import 'izitoast/dist/css/iziToast.min.css';
 
 const form = document.querySelector('.form');
 const galleryGrid = document.querySelector('.js-gallery-grid');
@@ -18,23 +19,19 @@ loadMoreBtn.addEventListener('click', handleLoadBtnClick);
 let page = 1;
 let inputValue;
 let totalPages = 0;
+let loading = false;
 
 async function handleFormSubmit(event) {
   event.preventDefault();
-  showLoadMoreBtn();
+  showLoader();
 
   galleryGrid.innerHTML = '';
 
   inputValue = event.target.elements.query.value.trim();
 
-  showLoader();
-
   if (!inputValue) {
-    galleryGrid.innerHTML = '';
-    iziToast.error({
-      message: 'Search field is empty',
-      position: 'topRight',
-    });
+    hideLoader();
+    showErrorToast('Search field is empty');
     return;
   }
 
@@ -46,24 +43,27 @@ async function handleFormSubmit(event) {
       totalPages = Math.ceil(data.totalHits / 15);
       checkLoadBtnStatus();
       createMarkupByHits(data.hits);
-
+      showLoadMoreBtn();
+      updateScrollObserver();
+      smoothScroll();
       return;
     }
-    throw Error(
-      'Sorry, there are no images matching your search query. Please try again!'
-    );
+    throw Error('Sorry, there are no images matching your search query. Please try again!');
   } catch (error) {
-    iziToast.info({
-      message:
-        typeof error === 'string' ? error : 'Something went wrong, sorry!',
-      position: 'topRight',
-    });
+    hideLoader();
+    showErrorToast(typeof error === 'string' ? error : 'Something went wrong, sorry!');
   }
 
-  event.target.reset();
+  form.reset();
 }
 
 async function handleLoadBtnClick(event) {
+  if (loading) {
+    return;
+  }
+
+  loading = true;
+
   showLoader();
   hideLoadMoreBtn();
 
@@ -75,24 +75,17 @@ async function handleLoadBtnClick(event) {
       hideLoader();
       checkLoadBtnStatus();
       createMarkupByHits(data.hits);
-      
-      // Scroll to the newly added content
-      const lastImage = document.querySelector('.gallery-card:last-child');
-      lastImage.scrollIntoView({ behavior: 'smooth', block: 'end' });
-
-      return;
+    } else {
+      hideLoadMoreBtn();
     }
-    throw Error(
-      'Sorry, there are no images matching your search query. Please try again!'
-    );
   } catch (error) {
-    iziToast.info({
-      message:
-        typeof error === 'string' ? error : 'Something went wrong, sorry!',
-      position: 'topRight',
-    });
+    hideLoader();
+    showErrorToast(typeof error === 'string' ? error : 'Something went wrong, sorry!');
+  } finally {
+    loading = false;
   }
-  event.target.reset();
+
+  form.reset();
 }
 
 function checkLoadBtnStatus() {
@@ -100,19 +93,16 @@ function checkLoadBtnStatus() {
     showLoadMoreBtn();
   } else {
     hideLoadMoreBtn();
-    iziToast.info({
-      message: "We're sorry, but you've reached the end of search results.",
-      position: 'topRight',
-    });
+    showInfoToast("We're sorry, but you've reached the end of search results.");
   }
 }
 
 function showLoader() {
-  loader.style.display = 'inline-block';
+  loader.classList.remove('hidden');
 }
 
 function hideLoader() {
-  loader.style.display = 'none';
+  loader.classList.add('hidden');
 }
 
 function showLoadMoreBtn() {
@@ -139,31 +129,76 @@ async function getImagesByInputValue() {
 }
 
 function createMarkupByHits(hits) {
-  const galleryItem = hits
-    .map(
-      ({
-        webformatURL,
-        largeImageURL,
-        tags,
-        likes,
-        views,
-        comments,
-        downloads,
-      }) => {
-        return `<a href="${largeImageURL}" class="gallery-card">
-      <img src="${webformatURL}" alt="${tags}" >
-      <div class="img-details-box">
-      <p class="detail-item"><b>Likes:</b> ${likes}</p>
-      <p class="detail-item"><b>Views:</b> ${views}</p>
-      <p class="detail-item"><b>Comments:</b> ${comments}</p>
-      <p class="detail-item"><b>Downloads:</b> ${downloads}</p></div>
-      </a>`;
-      }
-    )
-    .join('');
+  const fragment = document.createDocumentFragment();
+  hits.forEach(({ webformatURL, largeImageURL, tags, likes, views, comments, downloads }) => {
+    const galleryItem = document.createElement('a');
+    galleryItem.href = largeImageURL;
+    galleryItem.classList.add('gallery-card');
 
-  galleryGrid.insertAdjacentHTML('beforeend', galleryItem);
+    const image = document.createElement('img');
+    image.src = webformatURL;
+    image.alt = tags;
 
+    const detailsBox = document.createElement('div');
+    detailsBox.classList.add('img-details-box');
+
+    const likesElement = createDetailItem('Likes', likes);
+    const viewsElement = createDetailItem('Views', views);
+    const commentsElement = createDetailItem('Comments', comments);
+    const downloadsElement = createDetailItem('Downloads', downloads);
+
+    detailsBox.append(likesElement, viewsElement, commentsElement, downloadsElement);
+    galleryItem.append(image, detailsBox);
+    fragment.appendChild(galleryItem);
+  });
+
+  galleryGrid.appendChild(fragment);
   gallery.refresh();
 }
 
+function createDetailItem(label, value) {
+  const detailItem = document.createElement('p');
+  detailItem.classList.add('detail-item');
+  detailItem.innerHTML = `<b>${label}:</b> ${value}`;
+  return detailItem;
+}
+
+function updateScrollObserver() {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          handleLoadBtnClick();
+        }
+      });
+    },
+    {
+      rootMargin: '0px',
+      threshold: 0.2,
+    }
+  );
+
+  observer.observe(loadMoreBtn);
+}
+
+function smoothScroll() {
+  const cardHeight = document.querySelector('.gallery-card')?.getBoundingClientRect().height || 0;
+  window.scrollBy({
+    top: cardHeight * 2,
+    behavior: 'smooth',
+  });
+}
+
+function showErrorToast(message) {
+  iziToast.error({
+    message: message,
+    position: 'topRight',
+  });
+}
+
+function showInfoToast(message) {
+  iziToast.info({
+    message: message,
+    position: 'topRight',
+  });
+}
